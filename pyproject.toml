@@ -1,0 +1,19 @@
+[project]
+name = "home-assistant-git-config-integration"
+version = "0.1.0"
+description = "Home Assistant custom integration: install a git-managed configuration from the UI"
+requires-python = ">=3.14"
+license = "MIT"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff]
+line-length = 110
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501"]

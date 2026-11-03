@@ -1,0 +1,73 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Git Config Updater",
+        "description": "Install changes to a git-managed Home Assistant configuration from the UI.",
+        "data": {
+          "name": "Name",
+          "repository": "GitHub repository",
+          "branch": "Branch",
+          "token": "GitHub token",
+          "path": "Checkout path"
+        },
+        "data_description": {
+          "repository": "owner/name, e.g. your-user/ha-config.",
+          "branch": "The branch to deploy from.",
+          "token": "A fine-grained token with read-only Contents access to the repository.",
+          "path": "The local git checkout Home Assistant runs from, usually /config."
+        }
+      },
+      "reauth_confirm": {
+        "title": "Update the GitHub token",
+        "description": "Enter a new fine-grained token for {repository} (read-only Contents).",
+        "data": { "token": "GitHub token" }
+      }
+    },
+    "error": {
+      "invalid_repository": "Use the owner/name form, e.g. your-user/ha-config.",
+      "invalid_auth": "GitHub rejected the token.",
+      "repository_not_found": "The repository doesn't exist or the token can't see it.",
+      "branch_not_found": "That branch doesn't exist in the repository.",
+      "not_a_checkout": "That path isn't a git checkout.",
+      "git_missing": "The git command isn't available in this Home Assistant installation.",
+      "cannot_connect": "Couldn't reach GitHub."
+    },
+    "abort": {
+      "already_configured": "This repository, branch and path are already set up.",
+      "reauth_successful": "The token was updated."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Git Config Updater options",
+        "data": {
+          "scan_interval": "Check interval",
+          "backup": "Back up before installing",
+          "packages_dir": "Packages directory",
+          "restart_globs": "Extra restart-needed paths"
+        },
+        "data_description": {
+          "scan_interval": "How often to check GitHub for new commits.",
+          "backup": "Create a Home Assistant backup before each install.",
+          "packages_dir": "Directory of package YAML files, relative to the checkout.",
+          "restart_globs": "One glob per line; a changed file matching one forces a restart instead of a reload."
+        }
+      }
+    }
+  },
+  "issues": {
+    "restart_required": {
+      "title": "Restart needed to finish the config update",
+      "fix_flow": {
+        "step": {
+          "confirm": {
+            "title": "Restart Home Assistant",
+            "description": "Config {version} is installed, but some changes only take effect after a restart:\n\n{reasons}\n\nRestart Home Assistant now?"
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "domain": "git_config_updater",
+  "name": "Git Config Updater",
+  "codeowners": ["@rob1n"],
+  "config_flow": true,
+  "dependencies": ["repairs"],
+  "documentation": "https://github.com/rob1n/home-assistant-git-config-integration",
+  "integration_type": "service",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/rob1n/home-assistant-git-config-integration/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}
