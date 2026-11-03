@@ -77,6 +77,21 @@ async def test_already_configured(hass, repos):
     assert result["type"] is FlowResultType.ABORT and result["reason"] == "already_configured"
 
 
+async def test_path_and_branch_are_normalized(hass, repos, no_setup):
+    MockConfigEntry(domain=DOMAIN, unique_id=f"someone/ha-config@main:{repos.checkout}").add_to_hass(hass)
+    result = await start(hass)
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"], user_input(f" {repos.checkout}/ ", branch=" main "))
+    assert result["type"] is FlowResultType.ABORT and result["reason"] == "already_configured"
+    result = await start(hass)
+    with patch(f"{GH}.repository_info", AsyncMock(return_value={})), \
+            patch(f"{GH}.branch_head", AsyncMock(return_value="a" * 40)):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], user_input(f"{repos.checkout}/", branch=" dev "))
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"]["path"] == str(repos.checkout) and result["data"]["branch"] == "dev"
+
+
 async def test_reauth_updates_token(hass, repos, no_setup):
     entry = MockConfigEntry(domain=DOMAIN, data=user_input(repos.checkout), unique_id="u")
     entry.add_to_hass(hass)
@@ -95,6 +110,8 @@ async def test_options(hass, repos, no_setup):
     result = await hass.config_entries.options.async_init(entry.entry_id)
     assert result["step_id"] == "init"
     result = await hass.config_entries.options.async_configure(result["flow_id"], {
-        "scan_interval": 10, "backup": True, "packages_dir": "packages", "restart_globs": "www/**/*.js"})
+        "scan_interval": 10, "backup": True, "require_ci": True, "packages_dir": "packages",
+        "restart_globs": "www/**/*.js", "reload_globs": "secrets.fake.yaml"})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options["scan_interval"] == 10 and entry.options["restart_globs"] == "www/**/*.js"
+    assert entry.options["require_ci"] is True and entry.options["reload_globs"] == "secrets.fake.yaml"

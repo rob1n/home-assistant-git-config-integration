@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import issue_registry as ir
 
+from .const import DOMAIN, ISSUE_RESTART
 from .coordinator import GitConfigCoordinator, GitConfigUpdaterEntry
 
 PLATFORMS = [Platform.UPDATE]
@@ -25,6 +27,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: GitConfigUpdaterEntry) -
 
 async def async_unload_entry(hass: HomeAssistant, entry: GitConfigUpdaterEntry) -> bool:
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+
+
+async def async_remove_entry(hass: HomeAssistant, entry: GitConfigUpdaterEntry) -> None:
+    """Drop this entry's pending "Restart needed" repair."""
+    ir.async_delete_issue(hass, DOMAIN, f"{ISSUE_RESTART}_{entry.entry_id}")
 
 
 async def _options_updated(hass: HomeAssistant, entry: GitConfigUpdaterEntry) -> None:

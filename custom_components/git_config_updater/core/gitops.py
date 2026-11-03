@@ -68,7 +68,9 @@ class Git:
 
     def _run(self, *args: str, auth: bool = False, check: bool = True,
              timeout: int = LOCAL_TIMEOUT, binary: bool = False) -> subprocess.CompletedProcess:
-        env = os.environ.copy() | {"LC_ALL": "C", "GIT_TERMINAL_PROMPT": "0"}
+        # No optional locks: `git status` would otherwise take .git/index.lock to refresh the index,
+        # and collide with an install or with someone running git on the host.
+        env = os.environ.copy() | {"LC_ALL": "C", "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0"}
         if auth:
             env |= auth_env(self._token)
         # The checkout may be owned by another user than the one running Home Assistant.
@@ -155,8 +157,12 @@ class Git:
         res = self._run("show", f"{rev}:{path}", check=False, binary=True)
         file = Path(self.path, path)
         if res.returncode != 0:
-            return not file.exists()
-        return file.is_file() and file.read_bytes() == res.stdout
+            return not file.exists() and not file.is_symlink()
+        # A symlink is stored as its target path (mode 120000); compare the link, not what it points to.
+        tree = self._run("ls-tree", "-z", rev, "--", path).stdout
+        if tree.startswith("120000 "):
+            return file.is_symlink() and os.fsencode(os.readlink(file)) == res.stdout
+        return file.is_file() and not file.is_symlink() and file.read_bytes() == res.stdout
 
     def has_remote(self, name: str) -> bool:
         return name in self._run("remote").stdout.split()

@@ -39,3 +39,19 @@ def test_long_lists_are_truncated():
     many = [Commit(f"{i:040x}", f"c{i}", "2026-11-03T08:00:00+01:00", "T") for i in range(60)]
     md = changelog.notes(many, [], "none", Verdict(), [], None)
     assert "… and 10 more" in md
+
+
+def test_hints_for_ha_version_and_editor_files():
+    hints = changelog.blocked_hints([".HA_VERSION", "automations.yaml", "packages/x.yaml"], "2026.11.0")
+    assert hints[0].startswith("Home Assistant was upgraded") and "(2026.11.0)" in hints[0]
+    assert hints[1].startswith("automations.yaml was changed in Home Assistant's editors")
+    assert changelog.blocked_hints(["packages/x.yaml"]) == []
+    md = changelog.notes(COMMITS, CHANGES, "success", Verdict(), [".HA_VERSION"], None, ha_version="2026.11.0")
+    assert "Home Assistant was upgraded" in md
+
+
+def test_notes_warn_when_ci_is_required_and_not_passed():
+    assert "CI hasn't passed" in changelog.notes(COMMITS, CHANGES, "pending", Verdict(), [], None, require_ci=True)
+    assert "CI hasn't passed" not in changelog.notes(COMMITS, CHANGES, "success", Verdict(), [], None,
+                                                     require_ci=True)
+    assert "CI hasn't passed" not in changelog.notes(COMMITS, CHANGES, "failure", Verdict(), [], None)

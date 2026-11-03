@@ -44,7 +44,7 @@ class GitHub:
                     raise GitHubAuthError("GitHub rejected the token")
                 if resp.status == 404:
                     raise GitHubNotFound(path)
-                if resp.status == 403 and resp.headers.get("x-ratelimit-remaining") == "0":
+                if resp.status in (403, 429) and await self._rate_limited(resp):
                     raise GitHubError("GitHub API rate limit reached")
                 if resp.status == 403:
                     raise GitHubNotFound(path)  # no permission for this endpoint
@@ -53,6 +53,18 @@ class GitHub:
                 return await resp.json()
         except (TimeoutError, aiohttp.ClientError) as err:
             raise GitHubError(f"GitHub unreachable ({type(err).__name__})") from err
+
+    @staticmethod
+    async def _rate_limited(resp: aiohttp.ClientResponse) -> bool:
+        """Primary limits set x-ratelimit-remaining: 0; secondary ones send retry-after or only say so
+        in the message."""
+        if resp.status == 429 or resp.headers.get("x-ratelimit-remaining") == "0" \
+                or "retry-after" in resp.headers:
+            return True
+        try:
+            return "rate limit" in (await resp.text()).lower()
+        except (aiohttp.ClientError, UnicodeDecodeError):
+            return False
 
     async def repository_info(self) -> dict[str, Any]:
         """The repository; raises GitHubAuthError, GitHubNotFound or GitHubError."""

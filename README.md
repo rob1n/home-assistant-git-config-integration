@@ -13,8 +13,13 @@ deploy script.
 - **Shows a changelog** before you install: the new commits, the CI result of the latest one, the
   changed files, and whether a restart will be needed. A link opens the full diff on GitHub.
 - **Installs safely**, in this order:
-  1. Refuses if tracked files in the checkout have local changes (it lists them), so nothing edited
-     on the host is overwritten. A local edit that equals the new version doesn't count.
+  1. Refuses if the branch moved on since the update was shown (review the new changelog first), or,
+     with **Require CI to pass** on, if the commit's GitHub checks haven't passed.
+     Refuses if tracked files in the checkout have local changes (it lists them), so nothing edited
+     on the host is overwritten. A local edit that equals the new version doesn't count. Two usual
+     cases get a hint: after a Home Assistant upgrade, commit the new version to `.HA_VERSION`; after
+     an edit in the automation, script or scene editor, copy that file into the repository and
+     commit it.
   2. Optionally creates a backup first (Home Assistant only, without the database).
   3. Fetches the branch over HTTPS. The token is passed per command and never written to
      `.git/config`; the checkout's own `origin` remote is left alone.
@@ -30,14 +35,20 @@ deploy script.
 The rule is conservative: anything not known to be reloadable needs a restart.
 
 - `configuration.yaml`, and anything under `custom_components/`: restart.
-- Package files (YAML in the packages directory, `packages/` by default): reload, if every top-level
-  key before and after the change is a reloadable domain (automation, script, scene, template, group,
-  timer, schedule, person, zone, the `input_*` helpers, …). Otherwise restart.
-- `automations.yaml`, `scripts.yaml`, `scenes.yaml`, and files in `dashboards/`, `themes/`,
-  `blueprints/`, `www/` and similar folders, and non-YAML files: reload.
+- Package files (YAML in the packages directory, `packages/` by default) are parsed, and only the
+  top-level sections that changed count. A section reloads if its domain has a reload action
+  (automation, script, scene, template, group, timer, schedule, person, zone, rest, the `input_*`
+  helpers, …), or if it's an entity domain such as `sensor` or `light` whose every entry uses a
+  platform with a reload action (template, group, statistics, bayesian, trend, filter, min_max,
+  derivative, history_stats, universal, generic_thermostat, …). `sensor living:` counts as `sensor`.
+  Anything else, an `!include`d section, or a file that can't be parsed: restart.
+- `automations.yaml`, `scripts.yaml`, `scenes.yaml`, files in `dashboards/`, `themes/`, `blueprints/`,
+  `www/` and similar folders, dotfiles and dot-folders at the top (`.github/`,
+  `.pre-commit-config.yaml`, …), and non-YAML files: reload.
 - Any other YAML file could be included by `configuration.yaml` for any integration: restart.
-- You can add your own restart rules (globs) in the options, e.g. `www/**/*.js` for frontend modules
-  loaded through `extra_module_url`.
+- In the options you can add restart rules (globs), e.g. `www/**/*.js` for frontend modules loaded
+  through `extra_module_url`, and globs for files Home Assistant never loads, e.g.
+  `secrets.fake.yaml`.
 
 ## Requirements
 
@@ -66,8 +77,8 @@ Then **Settings → Devices & services → Add integration → Git Config Update
 | GitHub token | | Fine-grained, see above. Stored in the config entry only. |
 | Checkout path | `/config` | Defaults to the Home Assistant config folder. |
 
-Options (**Configure** on the integration): check interval, backup before installing, packages
-directory, extra restart rules.
+Options (**Configure** on the integration): check interval, backup before installing, require CI
+to pass, packages directory, extra restart rules, files Home Assistant never loads.
 
 When the token expires, Home Assistant asks for a new one (a reauthentication).
 
@@ -77,6 +88,10 @@ The integration runs inside Home Assistant. If a change stops Home Assistant fro
 help: fix the checkout from a shell (for example the Terminal & SSH app), e.g.
 `git -C /config reset --hard <previous commit>`, and restart. Invalid configuration caught by the check
 in step 5 never gets that far.
+
+The check in step 5 runs inside the running Home Assistant, so for a changed custom integration it
+validates against the code already loaded. Errors in the new integration code show up only after
+the restart.
 
 ## Development
 

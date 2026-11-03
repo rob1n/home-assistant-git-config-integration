@@ -5,7 +5,7 @@ from collections.abc import Sequence
 
 from .ci import FAILURE, NONE, PENDING, SUCCESS, UNKNOWN
 from .gitops import Change, Commit
-from .restart import Verdict
+from .restart import RELOADABLE_FILES, Verdict
 
 MAX_COMMITS = 50
 MAX_FILES = 60
@@ -31,6 +31,24 @@ def _md(text: str) -> str:
     return text
 
 
+def blocked_hints(blocked: Sequence[str], ha_version: str | None = None) -> list[str]:
+    """What to do about the usual blocking local changes (plain text, no markdown)."""
+    hints = []
+    if ".HA_VERSION" in blocked:
+        version = f" ({ha_version})" if ha_version else ""
+        hints.append(f"Home Assistant was upgraded and rewrote .HA_VERSION: commit the new version{version} "
+                     "to .HA_VERSION in the repository.")
+    if editors := [p for p in blocked if p in RELOADABLE_FILES]:
+        hints.append(f"{', '.join(editors)} {'was' if len(editors) == 1 else 'were'} changed in Home "
+                     "Assistant's editors: copy the file from the host into the repository and commit it.")
+    return hints
+
+
+def ci_blocks(ci: str) -> bool:
+    """With "require CI to pass" on, anything but a passed CI blocks the install."""
+    return ci != SUCCESS
+
+
 def summary(commits: Sequence[Commit], ci: str, verdict: Verdict, blocked: Sequence[str]) -> str:
     """One line, at most 255 characters (the update entity's limit)."""
     n = len(commits)
@@ -49,6 +67,8 @@ def notes(
     blocked: Sequence[str],
     compare_url: str | None,
     fast_forward: bool = True,
+    ha_version: str | None = None,
+    require_ci: bool = False,
 ) -> str:
     out: list[str] = []
     if not fast_forward:
@@ -57,7 +77,11 @@ def notes(
     if blocked:
         out += ["> ⚠️ **Local changes block the install.** Commit them to the repo or undo them:", ">"]
         out += [f"> - `{_md(p)}`" for p in blocked[:MAX_FILES]]
+        out += [f">\n> {_md(h)}" for h in blocked_hints(blocked, ha_version)]
         out += [""]
+    if require_ci and ci_blocks(ci):
+        out += ["> ⚠️ **CI hasn't passed for this commit.** The options require it, so install will refuse.",
+                ""]
     out += [f"**CI:** {CI_TEXT.get(ci, ci)}  ",
             "**After installing:** " + ("restart needed" if verdict.needed else "reload, no restart"), ""]
     if verdict.needed:

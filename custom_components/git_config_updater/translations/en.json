@@ -45,14 +45,18 @@
         "data": {
           "scan_interval": "Check interval",
           "backup": "Back up before installing",
+          "require_ci": "Require CI to pass",
           "packages_dir": "Packages directory",
-          "restart_globs": "Extra restart-needed paths"
+          "restart_globs": "Extra restart-needed paths",
+          "reload_globs": "Paths Home Assistant never loads"
         },
         "data_description": {
           "scan_interval": "How often to check GitHub for new commits.",
           "backup": "Create a Home Assistant backup before each install.",
           "packages_dir": "Directory of package YAML files, relative to the checkout.",
-          "restart_globs": "One glob per line; a changed file matching one forces a restart instead of a reload."
+          "require_ci": "Refuse to install a commit whose GitHub checks haven't passed (needs Checks or Commit statuses read access).",
+          "restart_globs": "One glob per line; a changed file matching one forces a restart instead of a reload.",
+          "reload_globs": "One glob per line, e.g. secrets.fake.yaml; a changed file matching one never asks for a restart."
         }
       }
     }

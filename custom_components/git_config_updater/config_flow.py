@@ -1,6 +1,7 @@
 """Config flow: repository, branch, token and checkout path; options: interval, backup, rules."""
 from __future__ import annotations
 
+import os
 import re
 from collections.abc import Mapping
 from typing import Any, override
@@ -25,6 +26,8 @@ from .const import (
     GITHUB_WEB,
     OPT_BACKUP,
     OPT_PACKAGES_DIR,
+    OPT_RELOAD_GLOBS,
+    OPT_REQUIRE_CI,
     OPT_RESTART_GLOBS,
     OPT_SCAN_MINUTES,
 )
@@ -33,6 +36,14 @@ from .github import GitHub, GitHubAuthError, GitHubError, GitHubNotFound
 
 _REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _PASSWORD = selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD))
+_MULTILINE = selector.TextSelector(selector.TextSelectorConfig(multiline=True))
+
+
+def _normalize(user_input: dict[str, Any]) -> None:
+    """One spelling per repository, branch and path, so the unique ID catches duplicates."""
+    user_input[CONF_REPOSITORY] = user_input[CONF_REPOSITORY].strip().removesuffix(".git")
+    user_input[CONF_BRANCH] = user_input[CONF_BRANCH].strip()
+    user_input[CONF_PATH] = os.path.normpath(user_input[CONF_PATH].strip())
 
 
 async def _validate(hass: HomeAssistant, data: Mapping[str, Any]) -> dict[str, str]:
@@ -79,7 +90,7 @@ class GitConfigUpdaterFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            user_input[CONF_REPOSITORY] = user_input[CONF_REPOSITORY].strip().removesuffix(".git")
+            _normalize(user_input)
             await self.async_set_unique_id(
                 f"{user_input[CONF_REPOSITORY].lower()}@{user_input[CONF_BRANCH]}:{user_input[CONF_PATH]}")
             self._abort_if_unique_id_configured()
@@ -128,8 +139,11 @@ class GitConfigUpdaterOptions(OptionsFlow):
                 selector.NumberSelector(selector.NumberSelectorConfig(
                     min=1, max=1440, step=1, unit_of_measurement="min", mode=selector.NumberSelectorMode.BOX)),
             probatio.Required(OPT_BACKUP, default=o.get(OPT_BACKUP, False)): selector.BooleanSelector(),
+            probatio.Required(OPT_REQUIRE_CI, default=o.get(OPT_REQUIRE_CI, False)): selector.BooleanSelector(),
             probatio.Required(OPT_PACKAGES_DIR, default=o.get(OPT_PACKAGES_DIR, DEFAULT_PACKAGES_DIR)): str,
             probatio.Optional(OPT_RESTART_GLOBS, description={"suggested_value": o.get(OPT_RESTART_GLOBS, "")}):
-                selector.TextSelector(selector.TextSelectorConfig(multiline=True)),
+                _MULTILINE,
+            probatio.Optional(OPT_RELOAD_GLOBS, description={"suggested_value": o.get(OPT_RELOAD_GLOBS, "")}):
+                _MULTILINE,
         })
         return self.async_show_form(step_id="init", data_schema=schema)

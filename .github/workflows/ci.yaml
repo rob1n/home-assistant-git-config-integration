@@ -29,7 +29,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7.0.1
-      - uses: home-assistant/actions/hassfest@1.0.0
+      # Pinned to a commit: the action's 1.0.0 tag predates the current hassfest image.
+      - uses: home-assistant/actions/hassfest@86d4564712fa02543c808e3a693dd04f9d3f8361 # master 2026-11
 
   hacs:
     runs-on: ubuntu-latest
@@ -37,3 +38,5 @@ jobs:
       - uses: hacs/action@22.5.0
         with:
           category: integration
+          # Not meant for the HACS catalog, so no brand icon.
+          ignore: brands

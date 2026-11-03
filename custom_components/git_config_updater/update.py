@@ -68,13 +68,16 @@ class GitConfigUpdate(CoordinatorEntity[GitConfigCoordinator], UpdateEntity):
 
     @override
     async def async_install(self, version: str | None, backup: bool, **kwargs: Any) -> None:
+        # The version the user saw in the dialog; if the branch moved on since, refuse.
+        expected = version or self.latest_version
+
         def progress(pct: int) -> None:
             self._attr_in_progress = True
             self._attr_update_percentage = pct
             self.async_write_ha_state()
 
         try:
-            await self.coordinator.async_install(backup, progress)
+            await self.coordinator.async_install(backup, progress, expected)
         finally:
             self._attr_in_progress = False
             self._attr_update_percentage = None

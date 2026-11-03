@@ -8,6 +8,7 @@ from homeassistant.helpers import issue_registry as ir
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_mock_service
 
 from custom_components.git_config_updater.const import DOMAIN
+from custom_components.git_config_updater.core.gitops import GitError
 
 from .gitrepo import git
 
@@ -152,3 +153,99 @@ async def test_backup_option_calls_backup(hass, repos, setup):
     await refresh(hass, entry)
     await hass.services.async_call("update", "install", {"entity_id": ENTITY, "backup": True}, blocking=True)
     assert len(backup_calls) == 1
+
+
+async def test_branch_moved_since_shown_installs_nothing(hass, repos, setup):
+    entry, reload_calls = setup
+    base = repos.head()
+    shown = repos.commit({"packages/lights.yaml": "input_boolean: {}\n"}, "Shown")
+    assert (await refresh(hass, entry)).attributes["latest_version"] == shown[:7]
+    newer = repos.commit({"packages/lights.yaml": "input_boolean:\n  b: {}\n"}, "Pushed while the dialog was open")
+    with pytest.raises(HomeAssistantError, match=f"moved on to {newer[:7]} since {shown[:7]}"):
+        await install(hass)
+    assert repos.head() == base and not reload_calls
+
+
+async def test_require_ci_refuses_until_ci_passes(hass, repos, setup):
+    entry, _ = setup
+    hass.config_entries.async_update_entry(entry, options={"require_ci": True})
+    await hass.async_block_till_done()  # the options listener reloads the entry
+    base = repos.head()
+    new = repos.commit({"packages/lights.yaml": "input_boolean: {}\n"}, "Edit")
+    with patch(f"{CO}.GitHub.ci_status", AsyncMock(return_value="pending")):
+        await refresh(hass, entry)
+        assert "CI hasn't passed" in entry.runtime_data.data.notes
+        with pytest.raises(HomeAssistantError, match="CI hasn't passed .* nothing was changed"):
+            await install(hass)
+    assert repos.head() == base
+    await refresh(hass, entry)  # the fixture's CI is "success"
+    await install(hass)
+    assert repos.head() == new
+
+
+async def test_reload_failure_is_reported_after_install(hass, repos, setup):
+    entry, _ = setup
+
+    async def failing_reload(call):
+        raise HomeAssistantError("integration x failed")
+
+    hass.services.async_register("homeassistant", "reload_all", failing_reload)
+    new = repos.commit({"packages/lights.yaml": "input_boolean: {}\n"}, "Edit")
+    await refresh(hass, entry)
+    with pytest.raises(HomeAssistantError, match=f"Installed {new[:7]}, but reloading failed: integration x"):
+        await install(hass)
+    assert repos.head() == new
+
+
+async def test_failed_rollback_is_reported(hass, repos, setup, check_config):
+    entry, _ = setup
+    base = repos.head()
+    repos.commit({"packages/lights.yaml": "input_boolean: [broken\n"}, "Break")
+    await refresh(hass, entry)
+    check_config.return_value = "Invalid config for input_boolean"
+    with patch(f"{CO}.Git.reset_hard", side_effect=GitError("git reset failed: disk full")), \
+            pytest.raises(HomeAssistantError, match=f"rolling back to {base[:7]} failed .*disk full.*Fix it on the host"):
+        await install(hass)
+
+
+async def test_scheduled_check_skips_git_during_install(hass, repos, setup, check_config):
+    entry, _ = setup
+    coordinator = entry.runtime_data
+    repos.commit({"packages/lights.yaml": "input_boolean: {}\n"}, "Edit")
+    await refresh(hass, entry)
+
+    async def check_runs_mid_install(_hass):
+        # A scheduled check firing while the checkout is being changed must not run git.
+        with patch.object(coordinator, "_status", side_effect=AssertionError("git ran during install")):
+            await coordinator.async_refresh()
+        assert coordinator.last_update_success
+        return None
+
+    check_config.side_effect = check_runs_mid_install
+    await install(hass)
+    assert repos.head() == repos.remote_head()
+
+
+async def test_ha_version_hint_when_upgraded(hass, repos, setup):
+    entry, _ = setup
+    repos.commit({".HA_VERSION": "2026.10.4\n"}, "Track the version")
+    await refresh(hass, entry)
+    await install(hass)
+    repos.commit({"packages/lights.yaml": "input_boolean: {}\n"}, "Edit")
+    (repos.checkout / ".HA_VERSION").write_text("2026.11.0\n")  # what an upgrade does
+    await refresh(hass, entry)
+    assert "commit the new version (2026.11.0)" in entry.runtime_data.data.notes
+    with pytest.raises(HomeAssistantError, match=r"\.HA_VERSION.*commit the new version \(2026\.11\.0\)"):
+        await install(hass)
+
+
+async def test_removing_the_entry_drops_the_restart_repair(hass, repos, setup):
+    entry, _ = setup
+    repos.commit({"configuration.yaml": "homeassistant:\n  name: Home\n"}, "Core change")
+    await refresh(hass, entry)
+    await install(hass)
+    issue_id = f"restart_required_{entry.entry_id}"
+    assert ir.async_get(hass).async_get_issue(DOMAIN, issue_id)
+    await hass.config_entries.async_remove(entry.entry_id)
+    await hass.async_block_till_done()
+    assert not ir.async_get(hass).async_get_issue(DOMAIN, issue_id)

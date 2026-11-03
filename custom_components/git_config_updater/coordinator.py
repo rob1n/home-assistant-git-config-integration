@@ -7,6 +7,7 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import timedelta
+from pathlib import Path
 from typing import Any
 
 from homeassistant.config import async_check_ha_config_file
@@ -30,10 +31,13 @@ from .const import (
     ISSUE_RESTART,
     OPT_BACKUP,
     OPT_PACKAGES_DIR,
+    OPT_RELOAD_GLOBS,
+    OPT_REQUIRE_CI,
     OPT_RESTART_GLOBS,
     OPT_SCAN_MINUTES,
 )
 from .core import changelog
+from .core.changelog import CI_TEXT, blocked_hints, ci_blocks
 from .core.ci import UNKNOWN
 from .core.gitops import Change, Commit, Git, GitError
 from .core.restart import Verdict, needs_restart
@@ -56,6 +60,8 @@ class Status:
     blocked: list[str] = field(default_factory=list)
     ci: str = UNKNOWN
     compare_url: str | None = None
+    ha_version: str | None = None  # the checkout's .HA_VERSION, for the hint when it blocks
+    require_ci: bool = False
 
     @property
     def summary(self) -> str | None:
@@ -68,7 +74,7 @@ class Status:
         if not self.update_available:
             return None
         return changelog.notes(self.commits, self.changes, self.ci, self.verdict, self.blocked,
-                               self.compare_url, self.fast_forward)
+                               self.compare_url, self.fast_forward, self.ha_version, self.require_ci)
 
 
 class InstallError(HomeAssistantError):
@@ -85,19 +91,32 @@ class GitConfigCoordinator(DataUpdateCoordinator[Status]):
         self.git = Git(entry.data[CONF_PATH], f"{GITHUB_WEB}/{self.repository}.git", entry.data[CONF_TOKEN])
         self.github = GitHub(async_get_clientsession(hass), self.repository, entry.data[CONF_TOKEN])
         self.install_lock = asyncio.Lock()
+        # Set while an install changes the checkout: scheduled checks then skip git entirely.
+        self._installing = False
 
     @property
     def _packages_dir(self) -> str:
         return self.config_entry.options.get(OPT_PACKAGES_DIR, DEFAULT_PACKAGES_DIR)
 
-    @property
-    def _restart_globs(self) -> list[str]:
-        raw = self.config_entry.options.get(OPT_RESTART_GLOBS, "") or ""
+    def _globs(self, option: str) -> list[str]:
+        raw = self.config_entry.options.get(option, "") or ""
         return [g.strip() for g in raw.replace(",", "\n").splitlines() if g.strip()]
+
+    @property
+    def _require_ci(self) -> bool:
+        return bool(self.config_entry.options.get(OPT_REQUIRE_CI, False))
+
+    def _ha_version(self) -> str | None:
+        try:
+            return Path(self.git.path, ".HA_VERSION").read_text().strip() or None
+        except OSError:
+            return None
 
     # --- checking --------------------------------------------------------------------------------
 
     async def _async_update_data(self) -> Status:
+        if self._installing and self.data:
+            return self.data  # don't run git while the install moves the checkout
         try:
             head = await self.github.branch_head(self.branch)
         except GitHubAuthError as err:
@@ -133,18 +152,23 @@ class GitConfigCoordinator(DataUpdateCoordinator[Status]):
         paths = [p for c in changes for p in (c.path, c.old_path) if p]
         verdict = needs_restart(
             paths, lambda p: (git.show(installed, p), git.show(head, p)),
-            self._packages_dir, self._restart_globs)
+            self._packages_dir, self._globs(OPT_RESTART_GLOBS), self._globs(OPT_RELOAD_GLOBS))
         blocked = [p for p in git.dirty() if not git.same_as(head, p)]
         return Status(
             installed, head, update_available=True, fast_forward=ff,
             commits=git.log(installed, head), changes=changes, verdict=verdict, blocked=blocked,
             compare_url=f"{GITHUB_WEB}/{self.repository}/compare/{installed[:12]}...{head[:12]}",
+            ha_version=self._ha_version() if ".HA_VERSION" in blocked else None,
+            require_ci=self._require_ci,
         )
 
     # --- installing ------------------------------------------------------------------------------
 
-    async def async_install(self, backup: bool, progress: Callable[[int], None]) -> None:
-        """Steps 1-7 of the README. Raises InstallError with a readable message on failure."""
+    async def async_install(self, backup: bool, progress: Callable[[int], None],
+                            expected: str | None = None) -> None:
+        """Steps 1-7 of the README. `expected` is the version the user was shown (a sha prefix);
+        if the branch has moved on since, nothing is installed. Raises InstallError with a readable
+        message on failure."""
         if self.install_lock.locked():
             raise InstallError("An install is already running")
         async with self.install_lock:
@@ -155,52 +179,68 @@ class GitConfigCoordinator(DataUpdateCoordinator[Status]):
             if not status.update_available:
                 raise InstallError("Already up to date")
             target = status.latest
-            progress(5)
-
-            same = await self.hass.async_add_executor_job(self._preflight, target)
-            progress(15)
-
-            if backup or self.config_entry.options.get(OPT_BACKUP, False):
-                await self._backup(target)
-            progress(40)
-
-            try:
-                old = await self.hass.async_add_executor_job(self._apply, target, same)
-            except GitError as err:
-                raise InstallError(f"Couldn't apply the update: {err}") from err
-            progress(60)
-
-            if errors := await async_check_ha_config_file(self.hass):
-                try:
-                    await self.hass.async_add_executor_job(self.git.reset_hard, old)
-                except GitError as err:
-                    raise InstallError(
-                        f"The new configuration is invalid and rolling back to {old[:7]} failed "
-                        f"({err}). Fix it on the host. Config errors: {errors}") from err
+            if expected and not target.startswith(expected):
                 raise InstallError(
-                    f"The new configuration is invalid, rolled back to {old[:7]}. Errors: {errors}")
-            await self.hass.async_add_executor_job(self._after_apply, target)
-            progress(75)
-
-            await self.hass.async_add_executor_job(self._touch_dashboards)
+                    f"The branch moved on to {target[:7]} since {expected[:7]} was shown. Nothing was "
+                    "changed; review the new changelog and install again.")
+            if self._require_ci and ci_blocks(status.ci):
+                raise InstallError(
+                    f"CI hasn't passed for {target[:7]} (CI {CI_TEXT.get(status.ci, status.ci)}). The "
+                    "options require it; nothing was changed.")
+            self._installing = True
             try:
-                await self.hass.services.async_call("homeassistant", "reload_all", blocking=True)
-            except HomeAssistantError as err:
-                raise InstallError(f"Installed {target[:7]}, but reloading failed: {err}") from err
-            progress(95)
-
-            if status.verdict.needed:
-                ir.async_create_issue(
-                    self.hass, DOMAIN, f"{ISSUE_RESTART}_{self.config_entry.entry_id}",
-                    is_fixable=True, is_persistent=False, severity=ir.IssueSeverity.WARNING,
-                    translation_key=ISSUE_RESTART,
-                    translation_placeholders={
-                        "version": target[:7],
-                        "reasons": "\n".join(f"- {r}" for r in status.verdict.reasons[:20]),
-                    },
-                    data={"entry_id": self.config_entry.entry_id},
-                )
+                await self._install(status, target, backup, progress)
+            finally:
+                self._installing = False
         await self.async_refresh()
+
+    async def _install(self, status: Status, target: str, backup: bool,
+                       progress: Callable[[int], None]) -> None:
+        progress(5)
+
+        same = await self.hass.async_add_executor_job(self._preflight, target)
+        progress(15)
+
+        if backup or self.config_entry.options.get(OPT_BACKUP, False):
+            await self._backup(target)
+        progress(40)
+
+        try:
+            old = await self.hass.async_add_executor_job(self._apply, target, same)
+        except GitError as err:
+            raise InstallError(f"Couldn't apply the update: {err}") from err
+        progress(60)
+
+        if errors := await async_check_ha_config_file(self.hass):
+            try:
+                await self.hass.async_add_executor_job(self.git.reset_hard, old)
+            except GitError as err:
+                raise InstallError(
+                    f"The new configuration is invalid and rolling back to {old[:7]} failed "
+                    f"({err}). Fix it on the host. Config errors: {errors}") from err
+            raise InstallError(
+                f"The new configuration is invalid, rolled back to {old[:7]}. Errors: {errors}")
+        await self.hass.async_add_executor_job(self._after_apply, target)
+        progress(75)
+
+        await self.hass.async_add_executor_job(self._touch_dashboards)
+        try:
+            await self.hass.services.async_call("homeassistant", "reload_all", blocking=True)
+        except HomeAssistantError as err:
+            raise InstallError(f"Installed {target[:7]}, but reloading failed: {err}") from err
+        progress(95)
+
+        if status.verdict.needed:
+            ir.async_create_issue(
+                self.hass, DOMAIN, f"{ISSUE_RESTART}_{self.config_entry.entry_id}",
+                is_fixable=True, is_persistent=False, severity=ir.IssueSeverity.WARNING,
+                translation_key=ISSUE_RESTART,
+                translation_placeholders={
+                    "version": target[:7],
+                    "reasons": "\n".join(f"- {r}" for r in status.verdict.reasons[:20]),
+                },
+                data={"entry_id": self.config_entry.entry_id},
+            )
 
     def _preflight(self, target: str) -> list[str]:
         """Refuse on blocking local changes or a non-fast-forward; return dirty files that already
@@ -212,9 +252,10 @@ class GitConfigCoordinator(DataUpdateCoordinator[Status]):
         same = [p for p in dirty if git.same_as(target, p)]
         blocked = [p for p in dirty if p not in same]
         if blocked:
+            hints = blocked_hints(blocked, self._ha_version())
             raise InstallError(
                 "Local changes to tracked files block the install. Commit them to the repository "
-                "or undo them on the host: " + ", ".join(blocked[:20]))
+                "or undo them on the host: " + ", ".join(blocked[:20]) + "".join(f" {h}" for h in hints))
         if not git.is_ancestor(git.head(), target):
             raise InstallError(
                 "The checkout has commits that aren't on the branch, so this isn't a fast-forward. "

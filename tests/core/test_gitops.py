@@ -1,4 +1,5 @@
 import base64
+import subprocess
 
 import pytest
 
@@ -94,3 +95,33 @@ def test_errors_redact_the_token(repos):
 def test_is_repo(tmp_path, repos):
     assert Git(str(repos.checkout), repos.url).is_repo()
     assert not Git(str(tmp_path / "nope"), repos.url).is_repo()
+
+
+def test_same_as_compares_symlinks_by_target(repos):
+    g = Git(str(repos.checkout), repos.url)
+    (repos.dev / "AGENTS.md").write_text("agents\n")
+    (repos.dev / "CLAUDE.md").symlink_to("AGENTS.md")
+    git(repos.dev, "add", "AGENTS.md", "CLAUDE.md")
+    git(repos.dev, "commit", "--quiet", "-m", "Link")
+    git(repos.dev, "push", "--quiet", "origin", "main")
+    head = g.fetch("main")
+    link = repos.checkout / "CLAUDE.md"
+    link.symlink_to("AGENTS.md")  # the same link, before the update arrives
+    assert g.same_as(head, "CLAUDE.md")
+    link.unlink()
+    link.write_text("agents\n")  # same content, but a regular file instead of the link
+    assert not g.same_as(head, "CLAUDE.md")
+
+
+def test_read_commands_take_no_optional_locks(repos, monkeypatch):
+    g = Git(str(repos.checkout), repos.url)
+    seen = {}
+    real_run = subprocess.run
+
+    def spy(cmd, **kw):
+        seen.update(kw["env"])
+        return real_run(cmd, **kw)
+
+    monkeypatch.setattr("custom_components.git_config_updater.core.gitops.subprocess.run", spy)
+    g.dirty()
+    assert seen["GIT_OPTIONAL_LOCKS"] == "0"
