@@ -1,5 +1,6 @@
-"""The few GitHub REST calls Git Config Updater needs: token and repo check, branch head, CI status.
-Commits, files and diffs come from git itself (see core/gitops.py)."""
+"""The few GitHub REST calls Git Config Updater needs: token and repo check, branch head, CI status
+(GitHub Actions workflow runs and commit statuses). Commits, files and diffs come from git itself
+(see core/gitops.py)."""
 from __future__ import annotations
 
 import asyncio
@@ -75,14 +76,14 @@ class GitHub:
         return data["commit"]["sha"]
 
     async def ci_status(self, sha: str) -> str:
-        """success / failure / pending / none / unknown (the token can't read checks)."""
+        """success / failure / pending / none / unknown (the token can't read Actions runs)."""
         async def maybe(path: str) -> Any:
             try:
                 return await self._get(path)
             except GitHubNotFound:
                 return None
         runs, statuses = await asyncio.gather(
-            maybe(f"/repos/{self.repository}/commits/{sha}/check-runs?per_page=100"),
+            maybe(f"/repos/{self.repository}/actions/runs?head_sha={sha}&per_page=100"),
             maybe(f"/repos/{self.repository}/commits/{sha}/status"),
         )
         return ci.combine(runs, statuses)

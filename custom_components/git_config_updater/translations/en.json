@@ -54,7 +54,7 @@
           "scan_interval": "How often to check GitHub for new commits.",
           "backup": "Create a Home Assistant backup before each install.",
           "packages_dir": "Directory of package YAML files, relative to the checkout.",
-          "require_ci": "Refuse to install a commit whose GitHub checks haven't passed (needs Checks or Commit statuses read access).",
+          "require_ci": "Refuse to install a commit whose GitHub checks haven't passed (needs Actions read access).",
           "restart_globs": "One glob per line; a changed file matching one forces a restart instead of a reload.",
           "reload_globs": "One glob per line, e.g. secrets.fake.yaml; a changed file matching one never asks for a restart."
         }

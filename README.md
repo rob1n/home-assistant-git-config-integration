@@ -57,8 +57,10 @@ The rule is conservative: anything not known to be reloadable needs a restart.
 - The configuration folder is a git checkout of a GitHub repository.
 - A GitHub [fine-grained personal access token](https://github.com/settings/personal-access-tokens/new):
   - Repository access: only the configuration repository.
-  - Permissions: **Contents: Read-only** (required). **Commit statuses** and **Checks: Read-only**
-    are optional; without them the CI result shows as "unknown".
+  - Permissions: **Contents: Read-only** (required). **Actions: Read-only** is optional: it lets the
+    integration see whether your GitHub Actions workflows passed for a commit. **Commit statuses:
+    Read-only** adds results from other CI systems. Without them the CI result shows as "unknown".
+    (GitHub doesn't offer the "Checks" permission on personal access tokens, only to GitHub Apps.)
 
 ## Installation
 

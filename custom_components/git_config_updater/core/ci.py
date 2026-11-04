@@ -1,4 +1,8 @@
-"""Fold GitHub check runs and commit statuses into one CI status for a commit."""
+"""Fold GitHub Actions workflow runs and commit statuses into one CI status for a commit.
+
+Fine-grained personal access tokens can't read check runs (GitHub only allows that for GitHub
+Apps), so workflow runs are the only way to see Actions results with this kind of token.
+"""
 from __future__ import annotations
 
 from typing import Any
@@ -9,14 +13,14 @@ _FAILED_CONCLUSIONS = {"failure", "timed_out", "cancelled", "action_required", "
 _OK_CONCLUSIONS = {"success", "neutral", "skipped"}
 
 
-def combine(check_runs: dict[str, Any] | None, statuses: dict[str, Any] | None) -> str:
-    """`check_runs` is the /commits/{sha}/check-runs response, `statuses` the /commits/{sha}/status
-    response; either may be None when the token can't read it. Failure wins over pending, pending
-    over success."""
-    if check_runs is None and statuses is None:
+def combine(workflow_runs: dict[str, Any] | None, statuses: dict[str, Any] | None) -> str:
+    """`workflow_runs` is the /actions/runs response filtered to one commit, `statuses` the
+    /commits/{sha}/status response; either may be None when the token can't read it. Failure wins
+    over pending, pending over success. The runs endpoint lists each run once, as its latest attempt."""
+    if workflow_runs is None and statuses is None:
         return UNKNOWN
     results: list[str] = []
-    for run in (check_runs or {}).get("check_runs", []):
+    for run in (workflow_runs or {}).get("workflow_runs", []):
         if run.get("status") != "completed":
             results.append(PENDING)
         elif run.get("conclusion") in _FAILED_CONCLUSIONS:

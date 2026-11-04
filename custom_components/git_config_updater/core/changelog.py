@@ -15,7 +15,7 @@ CI_TEXT = {
     FAILURE: "❌ failed",
     PENDING: "⏳ running",
     NONE: "no checks",
-    UNKNOWN: "unknown (the token can't read checks)",
+    UNKNOWN: "unknown (the token can't read Actions runs)",
 }
 STATUS_TEXT = {"A": "added", "M": "changed", "D": "deleted", "R": "renamed", "C": "copied", "T": "type changed"}
 

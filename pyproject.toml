@@ -1,6 +1,6 @@
 [project]
 name = "home-assistant-git-config-integration"
-version = "0.1.0"
+version = "0.1.1"
 description = "Home Assistant custom integration: install a git-managed configuration from the UI"
 requires-python = ">=3.14"
 license = "MIT"
